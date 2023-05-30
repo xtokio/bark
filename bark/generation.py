@@ -480,13 +480,7 @@ def generate_text_semantic(
                 v, _ = torch.topk(relevant_logits, min(top_k, relevant_logits.size(-1)))
                 relevant_logits[relevant_logits < v[-1]] = -float("Inf")
             probs = F.softmax(relevant_logits / temp, dim=-1)
-            # multinomial bugged on mps: shuttle to cpu if necessary
-            inf_device = probs.device
-            if probs.device.type == "mps":
-                probs = probs.to("cpu")
-            item_next = torch.multinomial(probs, num_samples=1)
-            probs = probs.to(inf_device)
-            item_next = item_next.to(inf_device)
+            item_next = torch.multinomial(probs, num_samples=1).to(torch.int32)
             if allow_early_stop and (
                 item_next == SEMANTIC_VOCAB_SIZE
                 or (min_eos_p is not None and probs[-1] >= min_eos_p)
@@ -670,13 +664,7 @@ def generate_coarse(
                     v, _ = torch.topk(relevant_logits, min(top_k, relevant_logits.size(-1)))
                     relevant_logits[relevant_logits < v[-1]] = -float("Inf")
                 probs = F.softmax(relevant_logits / temp, dim=-1)
-                # multinomial bugged on mps: shuttle to cpu if necessary
-                inf_device = probs.device
-                if probs.device.type == "mps":
-                    probs = probs.to("cpu")
-                item_next = torch.multinomial(probs, num_samples=1)
-                probs = probs.to(inf_device)
-                item_next = item_next.to(inf_device)
+                item_next = torch.multinomial(probs, num_samples=1).to(torch.int32)
                 item_next += logit_start_idx
                 x_coarse_in = torch.cat((x_coarse_in, item_next[None]), dim=1)
                 x_in = torch.cat((x_in, item_next[None]), dim=1)
@@ -781,16 +769,10 @@ def generate_fine(
                 else:
                     relevant_logits = logits[0, :, :CODEBOOK_SIZE] / temp
                     probs = F.softmax(relevant_logits, dim=-1)
-                    # multinomial bugged on mps: shuttle to cpu if necessary
-                    inf_device = probs.device
-                    if probs.device.type == "mps":
-                        probs = probs.to("cpu")
-                    codebook_preds = torch.hstack(
-                        [
-                            torch.multinomial(probs[nnn], num_samples=1).to(inf_device)
-                            for nnn in range(rel_start_fill_idx, 1024)
-                        ]
-                    )
+                    codebook_preds = torch.multinomial(
+                        probs[rel_start_fill_idx:1024], num_samples=1
+                    ).reshape(-1)
+                codebook_preds = codebook_preds.to(torch.int32)
                 in_buffer[0, rel_start_fill_idx:, nn] = codebook_preds
                 del logits, codebook_preds
             # transfer over info into model_in and convert to numpy
